@@ -8,18 +8,40 @@ function onHomepage(e) {
 function createHomepageCard() {
   console.log("Creating homepage card");
   var card = CardService.newCardBuilder();
-  card.setHeader(CardService.newCardHeader().setTitle("OttoFill"));
+  card.setHeader(CardService.newCardHeader().setTitle("OttoMate"));
   
-  var actionSection = CardService.newCardSection();
-  actionSection.addWidget(CardService.newTextButton()
+  // Create tabs
+  var addToQueueTab = CardService.newCardSection();
+  addToQueueTab.addWidget(CardService.newTextButton()
     .setText("Add to Queue")
     .setOnClickAction(CardService.newAction().setFunctionName("addToOttoQueue")));
   
-  card.addSection(actionSection);
+  var savedEmailsTab = createSavedEmailsSection();
   
-  var savedEmailsSection = createSavedEmailsSection();
-  card.addSection(savedEmailsSection);
+  var fixedFooter = CardService.newFixedFooter()
+    .setPrimaryButton(CardService.newTextButton()
+      .setText("Refresh")
+      .setOnClickAction(CardService.newAction().setFunctionName("onHomepage")));
+
+  card.addSection(CardService.newCardSection()
+    .addWidget(CardService.newDecoratedText()
+      .setText("Welcome to OttoMate")
+      .setWrapText(true)));
+
+  card.addSection(CardService.newCardSection()
+    .addWidget(CardService.newButtonSet()
+      .addButton(CardService.newTextButton()
+        .setText("Add to Queue")
+        .setOnClickAction(CardService.newAction().setFunctionName("showAddToQueueTab")))
+      .addButton(CardService.newTextButton()
+        .setText("Saved Emails")
+        .setOnClickAction(CardService.newAction().setFunctionName("showSavedEmailsTab")))));
+
+  card.addSection(addToQueueTab);
+  card.addSection(savedEmailsTab);
   
+  card.setFixedFooter(fixedFooter);
+
   return card.build();
 }
 
@@ -37,9 +59,11 @@ function createSavedEmailsSection() {
           .setTopLabel(email.subject || 'No Subject')
           .setContent(email.from || 'Unknown Sender')
           .setBottomLabel(email.timestamp ? new Date(email.timestamp).toLocaleString() : 'Unknown Date')
-          .setOnClickAction(CardService.newAction()
-            .setFunctionName("previewEmail")
-            .setParameters({emailId: email.messageId})));
+          .setButton(CardService.newTextButton()
+            .setText("View")
+            .setOnClickAction(CardService.newAction()
+              .setFunctionName("viewSavedEmail")
+              .setParameters({emailId: email.id.toString()}))));
       });
     } else {
       savedEmailsSection.addWidget(CardService.newTextParagraph().setText("No saved emails found."));
@@ -160,7 +184,16 @@ function addToOttoQueue(e) {
       messageId: messageId
     };
 
-    // Step 1: Add email to queue
+    // Process with OpenAI assistant
+    var aiResponseCard = callOpenAI(emailBody);
+    var jsonResponse = extractJsonFromAiResponse(aiResponseCard);
+
+    // Add the AI response to the emailDetails
+    emailDetails.assistantResponse = JSON.stringify(jsonResponse);
+
+    console.log("Email details with assistant response:", JSON.stringify(emailDetails, null, 2));
+
+    // Send email details and AI response to the server
     var options = {
       'method': 'post',
       'contentType': 'application/json',
@@ -170,7 +203,7 @@ function addToOttoQueue(e) {
       'timeout': 10000 // 10 seconds timeout
     };
 
-    console.log("Sending request to server:", SERVER_URL + "/email", "with options:", JSON.stringify(options));
+    console.log("Sending request to server:", SERVER_URL + "/email", "with options:", JSON.stringify(options, null, 2));
 
     var response = UrlFetchApp.fetch(SERVER_URL + "/email", options);
     var responseCode = response.getResponseCode();
@@ -183,10 +216,7 @@ function addToOttoQueue(e) {
       throw new Error('Unexpected response from server: ' + responseCode + ' - ' + responseBody);
     }
 
-    // Step 2: Process with OpenAI assistant
-    var aiResponseCard = callOpenAI(emailBody);
-
-    // The aiResponseCard is now a Card object, so we can return it directly
+    // Return the AI response card to display to the user
     return CardService.newActionResponseBuilder()
       .setNavigation(CardService.newNavigation().pushCard(aiResponseCard))
       .build();
@@ -205,12 +235,35 @@ function addToOttoQueue(e) {
   }
 }
 
+function extractJsonFromAiResponse(aiResponseCard) {
+  var jsonResponse = {};
+  
+  if (aiResponseCard && aiResponseCard.sections) {
+    aiResponseCard.sections.forEach(function(section) {
+      if (section.widgets) {
+        section.widgets.forEach(function(widget) {
+          if (widget.textInput) {
+            var key = widget.textInput.name;
+            var value = widget.textInput.value;
+            jsonResponse[key] = value;
+          }
+        });
+      }
+    });
+  } else {
+    console.error('Invalid aiResponseCard structure:', JSON.stringify(aiResponseCard, null, 2));
+  }
+  
+  console.log('Extracted JSON response:', JSON.stringify(jsonResponse, null, 2));
+  return jsonResponse;
+}
+
 function onGmailMessage(e) {
   var accessToken = e.gmail.accessToken;
   GmailApp.setCurrentMessageAccessToken(accessToken);
 
   var card = CardService.newCardBuilder();
-  card.setHeader(CardService.newCardHeader().setTitle("OttoFill Actions"));
+  card.setHeader(CardService.newCardHeader().setTitle("OttoMate Actions"));
 
   var section = CardService.newCardSection();
   section.addWidget(CardService.newTextButton()
@@ -272,7 +325,7 @@ function callOpenAI(emailBody) {
       },
       'payload': JSON.stringify({
         'role': 'user',
-        'content': 'Please analyze this email and provide a summary, key points, and suggested response: ' + emailBody
+        'content': 'Please analyze this email, find the relevant information and respond with a JSON: ' + emailBody
       }),
       'muteHttpExceptions': true
     });
@@ -345,16 +398,18 @@ function callOpenAI(emailBody) {
       var messagesData = JSON.parse(messagesResponse.getContentText());
       var assistantMessage = messagesData.data.find(message => message.role === 'assistant');
       
-      if (assistantMessage) {
+      if (assistantMessage && assistantMessage.content && assistantMessage.content[0] && assistantMessage.content[0].text) {
         try {
           var jsonResponse = JSON.parse(assistantMessage.content[0].text.value);
           return createEditableResponseCard(jsonResponse);
         } catch (parseError) {
           console.error('Error parsing OpenAI response:', parseError);
-          return createErrorCard('Error: Unable to parse AI response. Details: ' + parseError.message);
+          console.log('Raw response:', assistantMessage.content[0].text.value);
+          return createEditableResponseCard({ error: "Unable to parse AI response. Raw response: " + assistantMessage.content[0].text.value });
         }
       } else {
-        return createErrorCard('No response from assistant.');
+        console.error('Unexpected assistant message structure:', assistantMessage);
+        return createErrorCard('Error: Unexpected response structure from assistant.');
       }
     } else {
       return createErrorCard('Assistant run failed or timed out. Final status: ' + status);
@@ -367,15 +422,26 @@ function callOpenAI(emailBody) {
 
 function createEditableResponseCard(jsonResponse) {
   var card = CardService.newCardBuilder();
-  card.setHeader(CardService.newCardHeader().setTitle("OttoFill Assistant Response"));
+  card.setHeader(CardService.newCardHeader().setTitle("OttoMate Assistant Response"));
+
+  if (typeof jsonResponse !== 'object' || jsonResponse === null) {
+    console.error('Invalid jsonResponse:', jsonResponse);
+    card.addSection(CardService.newCardSection()
+      .addWidget(CardService.newTextParagraph()
+        .setText("Error: Received an invalid response from the AI assistant.")));
+    return card.build();
+  }
 
   Object.keys(jsonResponse).forEach(function(key) {
     var section = CardService.newCardSection().setHeader(formatHeader(key));
     
+    var value = jsonResponse[key];
+    var stringValue = (value !== null && value !== undefined) ? value.toString() : '';
+    
     var textInput = CardService.newTextInput()
       .setFieldName(key)
-      .setValue(jsonResponse[key].toString())
-      .setMultiline(key === 'notes')  // Make 'notes' a multiline input
+      .setValue(stringValue)
+      .setMultiline(key === 'notes' || stringValue.length > 50)  // Make 'notes' or long text multiline
       .setTitle('Edit ' + formatHeader(key));
     
     section.addWidget(textInput);
@@ -486,3 +552,87 @@ function createErrorCard(message) {
   
   return card.build();
 }
+
+function showAddToQueueTab(e) {
+  var card = createHomepageCard();
+  card.sections[2].setVisible(true);
+  card.sections[3].setVisible(false);
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().updateCard(card))
+    .build();
+}
+
+function showSavedEmailsTab(e) {
+  var card = createHomepageCard();
+  card.sections[2].setVisible(false);
+  card.sections[3].setVisible(true);
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().updateCard(card))
+    .build();
+}
+
+function viewSavedEmail(e) {
+  var emailId = e.parameters.emailId;
+  
+  try {
+    var email = fetchSavedEmailById(emailId);
+    if (!email) {
+      return createErrorCard("Unable to retrieve email details.");
+    }
+    
+    var card = CardService.newCardBuilder();
+    card.setHeader(CardService.newCardHeader().setTitle("Saved Email Details"));
+    
+    var detailsSection = CardService.newCardSection();
+    detailsSection.addWidget(CardService.newKeyValue()
+      .setTopLabel("From")
+      .setContent(email.from));
+    detailsSection.addWidget(CardService.newKeyValue()
+      .setTopLabel("Subject")
+      .setContent(email.subject));
+    detailsSection.addWidget(CardService.newKeyValue()
+      .setTopLabel("Date")
+      .setContent(new Date(email.timestamp).toLocaleString()));
+    detailsSection.addWidget(CardService.newTextParagraph()
+      .setText(email.body));
+    
+    card.addSection(detailsSection);
+    
+    return CardService.newActionResponseBuilder()
+      .setNavigation(CardService.newNavigation().pushCard(card.build()))
+      .build();
+  } catch (error) {
+    console.error('Error in viewSavedEmail:', error);
+    return createErrorCard("Error viewing saved email. Please try again later.");
+  }
+}
+
+function fetchSavedEmailById(emailId) {
+  var userEmail = Session.getActiveUser().getEmail();
+  var url = SERVER_URL + "/email/" + emailId;
+  
+  try {
+    var options = {
+      'method': 'get',
+      'muteHttpExceptions': true,
+      'headers': {
+        'user-email': userEmail
+      }
+    };
+    
+    var response = UrlFetchApp.fetch(url, options);
+    var statusCode = response.getResponseCode();
+    var contentText = response.getContentText();
+    
+    if (statusCode === 200) {
+      return JSON.parse(contentText);
+    } else {
+      console.error('Error fetching email. Status code:', statusCode, 'Response:', contentText);
+      return null;
+    }
+  } catch (error) {
+    console.error('Error in fetchSavedEmailById:', error);
+    return null;
+  }
+}
+
