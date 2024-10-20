@@ -184,23 +184,11 @@ function addToOttoQueue(e) {
     }
 
     // Step 2: Process with OpenAI assistant
-    var aiResponse = callOpenAI(emailBody);
+    var aiResponseCard = callOpenAI(emailBody);
 
-    // Create a card to display the AI response
-    var card = CardService.newCardBuilder();
-    card.setHeader(CardService.newCardHeader().setTitle("Email Added to Queue"));
-
-    var section = CardService.newCardSection();
-    section.addWidget(CardService.newTextParagraph().setText("Email successfully added to the queue."));
-
-    var aiSection = CardService.newCardSection().setHeader("OttoFill Assistant");
-    aiSection.addWidget(CardService.newTextParagraph().setText(aiResponse));
-
-    card.addSection(section);
-    card.addSection(aiSection);
-
+    // The aiResponseCard is now a Card object, so we can return it directly
     return CardService.newActionResponseBuilder()
-      .setNavigation(CardService.newNavigation().pushCard(card.build()))
+      .setNavigation(CardService.newNavigation().pushCard(aiResponseCard))
       .build();
 
   } catch (error) {
@@ -211,7 +199,9 @@ function addToOttoQueue(e) {
     } else {
       errorMessage += error.message;
     }
-    return createErrorCard(errorMessage);
+    return CardService.newActionResponseBuilder()
+      .setNavigation(CardService.newNavigation().pushCard(createErrorCard(errorMessage)))
+      .build();
   }
 }
 
@@ -354,14 +344,78 @@ function callOpenAI(emailBody) {
       
       var messagesData = JSON.parse(messagesResponse.getContentText());
       var assistantMessage = messagesData.data.find(message => message.role === 'assistant');
-      return assistantMessage ? assistantMessage.content[0].text.value : 'No response from assistant.';
+      
+      if (assistantMessage) {
+        try {
+          var jsonResponse = JSON.parse(assistantMessage.content[0].text.value);
+          return createEditableResponseCard(jsonResponse);
+        } catch (parseError) {
+          console.error('Error parsing OpenAI response:', parseError);
+          return createErrorCard('Error: Unable to parse AI response. Details: ' + parseError.message);
+        }
+      } else {
+        return createErrorCard('No response from assistant.');
+      }
     } else {
-      throw new Error('Assistant run failed or timed out. Final status: ' + status);
+      return createErrorCard('Assistant run failed or timed out. Final status: ' + status);
     }
   } catch (error) {
     console.error('Error in callOpenAI:', error);
-    return 'Error: Unable to process email. Details: ' + error.message;
+    return createErrorCard('Error: Unable to process email. Details: ' + error.message);
   }
+}
+
+function createEditableResponseCard(jsonResponse) {
+  var card = CardService.newCardBuilder();
+  card.setHeader(CardService.newCardHeader().setTitle("OttoFill Assistant Response"));
+
+  Object.keys(jsonResponse).forEach(function(key) {
+    var section = CardService.newCardSection().setHeader(formatHeader(key));
+    
+    var textInput = CardService.newTextInput()
+      .setFieldName(key)
+      .setValue(jsonResponse[key].toString())
+      .setMultiline(key === 'notes')  // Make 'notes' a multiline input
+      .setTitle('Edit ' + formatHeader(key));
+    
+    section.addWidget(textInput);
+    card.addSection(section);
+  });
+
+  // Add a button to save changes
+  var buttonSection = CardService.newCardSection();
+  buttonSection.addWidget(CardService.newTextButton()
+    .setText("Save Changes")
+    .setOnClickAction(CardService.newAction().setFunctionName("saveChanges")));
+  card.addSection(buttonSection);
+
+  return card.build();
+}
+
+function formatHeader(key) {
+  return key.split(/(?=[A-Z])/).join(' ').replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+}
+
+function saveChanges(e) {
+  var updatedData = {};
+  Object.keys(e.formInput).forEach(function(key) {
+    updatedData[key] = e.formInput[key];
+  });
+
+  // Here you can add logic to save the updated data to your backend or perform any other necessary actions
+  console.log('Updated data:', updatedData);
+
+  // Create a confirmation card
+  var card = CardService.newCardBuilder();
+  card.setHeader(CardService.newCardHeader().setTitle("Changes Saved"));
+  
+  var section = CardService.newCardSection();
+  section.addWidget(CardService.newTextParagraph().setText("Your changes have been saved successfully."));
+  card.addSection(section);
+
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().pushCard(card.build()))
+    .build();
 }
 
 function checkServerReachability() {
@@ -419,4 +473,16 @@ function displayServerStatus(e) {
   return CardService.newActionResponseBuilder()
     .setNavigation(CardService.newNavigation().pushCard(card.build()))
     .build();
+}
+
+function createErrorCard(message) {
+  var card = CardService.newCardBuilder();
+  card.setHeader(CardService.newCardHeader().setTitle("Error"));
+  
+  var section = CardService.newCardSection();
+  section.addWidget(CardService.newTextParagraph().setText(message));
+  
+  card.addSection(section);
+  
+  return card.build();
 }
