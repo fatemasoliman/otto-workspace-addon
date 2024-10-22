@@ -28,6 +28,12 @@ function createHomepageCard() {
       .setText("Welcome to OttoMate")
       .setWrapText(true)));
 
+  // Replace the "Open Trella App" button with this:
+  card.addSection(CardService.newCardSection()
+    .addWidget(CardService.newTextButton()
+      .setText("Open Trella App")
+      .setOnClickAction(CardService.newAction().setFunctionName("showTrellaDialog"))));
+
   card.addSection(CardService.newCardSection()
     .addWidget(CardService.newButtonSet()
       .addButton(CardService.newTextButton()
@@ -448,11 +454,11 @@ function createEditableResponseCard(jsonResponse) {
     card.addSection(section);
   });
 
-  // Add a button to save changes
+  // Add a button to create
   var buttonSection = CardService.newCardSection();
   buttonSection.addWidget(CardService.newTextButton()
-    .setText("Save Changes")
-    .setOnClickAction(CardService.newAction().setFunctionName("saveChanges")));
+    .setText("Create")
+    .setOnClickAction(CardService.newAction().setFunctionName("createShipment")));
   card.addSection(buttonSection);
 
   return card.build();
@@ -471,12 +477,31 @@ function saveChanges(e) {
   // Here you can add logic to save the updated data to your backend or perform any other necessary actions
   console.log('Updated data:', updatedData);
 
+  // Create the URL with parameters
+  var baseUrl = "https://ops.trella.app/upsert/jobs/export";
+  var urlParams = [];
+  
+  Object.keys(updatedData).forEach(function(key) {
+    urlParams.push(encodeURIComponent(key) + '=' + encodeURIComponent(updatedData[key]));
+  });
+
+  var fullUrl = baseUrl + "?" + urlParams.join('&');
+
   // Create a confirmation card
   var card = CardService.newCardBuilder();
   card.setHeader(CardService.newCardHeader().setTitle("Changes Saved"));
   
   var section = CardService.newCardSection();
   section.addWidget(CardService.newTextParagraph().setText("Your changes have been saved successfully."));
+  
+  // Add a button to open the Trella app with parameters
+  section.addWidget(CardService.newTextButton()
+    .setText("Open Trella App")
+    .setOpenLink(CardService.newOpenLink()
+      .setUrl(fullUrl)
+      .setOpenAs(CardService.OpenAs.FULL_SIZE)
+      .setOnClose(CardService.OnClose.NOTHING)));
+
   card.addSection(section);
 
   return CardService.newActionResponseBuilder()
@@ -636,3 +661,65 @@ function fetchSavedEmailById(emailId) {
   }
 }
 
+function showTrellaDialog(e) {
+  var card = CardService.newCardBuilder();
+  card.setHeader(CardService.newCardHeader().setTitle("Trella App Information"));
+  
+  var section = CardService.newCardSection()
+    .addWidget(CardService.newTextParagraph()
+      .setText("The Trella app allows you to manage and track your shipments efficiently."))
+    .addWidget(CardService.newTextParagraph()
+      .setText("Click the button below to open the Trella app in a new tab:"))
+    .addWidget(CardService.newTextButton()
+      .setText("Open Trella App")
+      .setOpenLink(CardService.newOpenLink()
+        .setUrl("https://ops.trella.app/upsert/jobs/export")
+        .setOpenAs(CardService.OpenAs.FULL_SIZE)
+        .setOnClose(CardService.OnClose.NOTHING)));
+
+  card.addSection(section);
+
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().pushCard(card.build()))
+    .build();
+}
+
+function createShipment(e) {
+  var shipmentData = {};
+  Object.keys(e.formInput).forEach(function(key) {
+    shipmentData[key] = e.formInput[key];
+  });
+
+  console.log('Shipment data:', shipmentData);
+
+  // Create the URL with parameters
+  var baseUrl = "https://ops.trella.app/upsert/jobs/export";
+  var urlParams = [];
+  
+  Object.keys(shipmentData).forEach(function(key) {
+    urlParams.push(encodeURIComponent(key) + '=' + encodeURIComponent(shipmentData[key]));
+  });
+
+  var fullUrl = baseUrl + "?" + urlParams.join('&');
+
+  // Create a confirmation card
+  var card = CardService.newCardBuilder();
+  card.setHeader(CardService.newCardHeader().setTitle("Shipment Created"));
+  
+  var section = CardService.newCardSection();
+  section.addWidget(CardService.newTextParagraph().setText("Your shipment has been created successfully."));
+  
+  // Add a button to open the Trella app with parameters
+  section.addWidget(CardService.newTextButton()
+    .setText("Open Trella App")
+    .setOpenLink(CardService.newOpenLink()
+      .setUrl(fullUrl)
+      .setOpenAs(CardService.OpenAs.FULL_SIZE)
+      .setOnClose(CardService.OnClose.NOTHING)));
+
+  card.addSection(section);
+
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().pushCard(card.build()))
+    .build();
+}
