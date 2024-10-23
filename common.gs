@@ -684,6 +684,101 @@ function showTrellaDialog(e) {
     .build();
 }
 
+function populateFormFields(aiResponse, formFields) {
+  // Object to store populated values
+  let populatedValues = {};
+
+  // Function to set value for a given field
+  function setValue(field, value) {
+    if (field && field.id) {
+      populatedValues[field.id] = {
+        type: field.type,
+        inputType: field.inputType,
+        name: field.name,
+        id: field.id,
+        value: value,
+        selector: field.selector,
+        label: field.label
+      };
+    }
+  }
+
+  // Helper function to find a field by label
+  function findFieldByLabel(label) {
+    return formFields.fields.find(field => field.label.toLowerCase() === label.toLowerCase());
+  }
+
+  // Iterate through the AI response and set values
+  Object.entries(aiResponse).forEach(([key, value]) => {
+    const label = key.toLowerCase();
+    let field = findFieldByLabel(label);
+
+    if (field) {
+      setValue(field, value);
+    } else {
+      // Handle special cases
+      switch (label) {
+        case 'pickupaddress':
+          field = findFieldByLabel('Pickup Address');
+          if (field) setValue(field, value);
+          break;
+        case 'dropoffaddress':
+          field = findFieldByLabel('Drop-off Address');
+          if (field) setValue(field, value);
+          break;
+        case 'bookingnumber':
+          field = findFieldByLabel('Booking Number');
+          if (field) setValue(field, value);
+          break;
+        case 'containerids':
+          // Assuming this might be related to 'Containerized Load'
+          field = findFieldByLabel('Containerized Load');
+          if (field) setValue(field, value ? 'on' : 'off');
+          break;
+        case 'containertype':
+          field = findFieldByLabel('Truck Type');
+          if (field) setValue(field, value);
+          break;
+        case 'weight':
+          field = findFieldByLabel('Weight in Tons');
+          if (field) setValue(field, value);
+          break;
+      }
+    }
+  });
+
+  // Handle custom logic for dates and times
+  if (aiResponse.notes) {
+    const loadingDateMatch = aiResponse.notes.match(/Loading date: (\d{2})\.(\d{2})\.(\d{4}) \/ (\d{2}):(\d{2}) (AM|PM)/);
+    if (loadingDateMatch) {
+      const [, day, month, year, hour, minute, ampm] = loadingDateMatch;
+      
+      let pickupDateField = findFieldByLabel('Pickup Date');
+      if (pickupDateField) setValue(pickupDateField, `${year}${month}${day}`);
+      
+      let hourValue = parseInt(hour);
+      if (ampm === 'PM' && hourValue !== 12) {
+        hourValue += 12;
+      } else if (ampm === 'AM' && hourValue === 12) {
+        hourValue = 0;
+      }
+      
+      let pickupHourField = findFieldByLabel('Pickup Hour');
+      if (pickupHourField) setValue(pickupHourField, hourValue.toString());
+      
+      let pickupMinuteField = findFieldByLabel('Pickup Minute');
+      if (pickupMinuteField) setValue(pickupMinuteField, minute);
+    }
+
+    // Set customs procedure (if applicable)
+    if (aiResponse.notes.includes('Customs procedures: BOSLA')) {
+      // You might want to add a field for customs procedure in your form fields
+    }
+  }
+
+  return populatedValues;
+}
+
 function createShipment(e) {
   var shipmentData = {};
   Object.keys(e.formInput).forEach(function(key) {
@@ -694,7 +789,7 @@ function createShipment(e) {
 
   // Create the URL with parameters
   var baseUrl = "https://ops.trella.app/upsert/jobs/export";
-  var urlParams = [];
+  var urlParams = ["triggerottofillextension=true"];  // Add this as the first parameter
   
   Object.keys(shipmentData).forEach(function(key) {
     urlParams.push(encodeURIComponent(key) + '=' + encodeURIComponent(shipmentData[key]));
@@ -702,12 +797,105 @@ function createShipment(e) {
 
   var fullUrl = baseUrl + "?" + urlParams.join('&');
 
+  // Simulate the AI response (in a real scenario, this would come from your AI service)
+  var aiResponse = shipmentData;
+
+  // Use the provided form fields structure
+  var formFields = {
+    fields: [
+      {
+        "type": "input",
+        "inputType": "text",
+        "name": "",
+        "id": "shipperKey",
+        "value": "",
+        "selector": "input#shipperKey",
+        "label": "Shipper Key"
+      },
+      {
+        "type": "input",
+        "inputType": "text",
+        "name": "",
+        "id": "pickupAddress",
+        "value": "",
+        "selector": "input#pickupAddress",
+        "label": "Pickup Address"
+      },
+      {
+        "type": "input",
+        "inputType": "text",
+        "name": "",
+        "id": "dropOffAddress",
+        "value": "",
+        "selector": "input#dropOffAddress",
+        "label": "Drop-off Address"
+      },
+      {
+        "type": "input",
+        "inputType": "text",
+        "name": "bookingNumber",
+        "id": "bookingNumber",
+        "value": "",
+        "selector": "input#bookingNumber",
+        "label": "Booking Number"
+      },
+      {
+        "type": "input",
+        "inputType": "text",
+        "name": "",
+        "id": "vehicleType",
+        "value": "",
+        "selector": "input#vehicleType",
+        "label": "Truck Type"
+      },
+      {
+        "type": "input",
+        "inputType": "text",
+        "name": "",
+        "id": "commodity",
+        "value": "",
+        "selector": "input#commodity",
+        "label": "Commodity"
+      },
+      {
+        "type": "input",
+        "inputType": "text",
+        "name": "weight",
+        "id": "weight",
+        "value": "",
+        "selector": "input#weight",
+        "label": "Weight in Tons"
+      },
+      {
+        "type": "textarea",
+        "inputType": "textarea",
+        "name": "notes",
+        "id": "notes",
+        "value": "",
+        "selector": "textarea#notes",
+        "label": "Notes"
+      }
+    ]
+  };
+
+  // Call populateFormFields and get the populated values
+  var populatedValues = populateFormFields(aiResponse, formFields);
+
   // Create a confirmation card
   var card = CardService.newCardBuilder();
   card.setHeader(CardService.newCardHeader().setTitle("Shipment Created"));
   
   var section = CardService.newCardSection();
   section.addWidget(CardService.newTextParagraph().setText("Your shipment has been created successfully."));
+  
+  // Display the populated form fields as raw JSON
+  var jsonString = JSON.stringify(populatedValues, null, 2);
+  section.addWidget(CardService.newTextParagraph().setText("Populated Form Fields (JSON):"));
+  section.addWidget(CardService.newTextInput()
+    .setFieldName("jsonOutput")
+    .setValue(jsonString)
+    .setMultiline(true)
+    .setTitle("JSON Output"));
   
   // Add a button to open the Trella app with parameters
   section.addWidget(CardService.newTextButton()
