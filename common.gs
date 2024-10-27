@@ -176,8 +176,12 @@ function addToOttoQueue(e) {
       throw new Error('Unable to retrieve thread');
     }
 
-    var firstMessage = thread.getMessages()[0]; // Get the first message in the thread
+    var firstMessage = thread.getMessages()[0];
     var messageId = firstMessage.getId();
+    
+    // Store the messageId in PropertiesService
+    PropertiesService.getUserProperties().setProperty('currentMessageId', messageId);
+
     var emailBody = firstMessage.getPlainBody();
 
     var emailDetails = {
@@ -187,12 +191,13 @@ function addToOttoQueue(e) {
       body: emailBody.substring(0, 1000),
       user: Session.getActiveUser().getEmail(),
       status: "new",
-      messageId: messageId
+      messageId: messageId  // Make sure this is included
     };
 
     // Process with OpenAI assistant
-    var aiResponseCard = callOpenAI(emailBody);
+    var aiResponseCard = callOpenAI(emailBody, messageId);
     var jsonResponse = extractJsonFromAiResponse(aiResponseCard);
+    jsonResponse.messageId = messageId;  // Ensure messageId is in the response
 
     // Add the AI response to the emailDetails
     emailDetails.assistantResponse = JSON.stringify(jsonResponse);
@@ -298,7 +303,7 @@ function createErrorCard(message) {
     .build();
 }
 
-function callOpenAI(emailBody) {
+function callOpenAI(emailBody, messageId) {  // Add messageId parameter
   var openaiApiKey = PropertiesService.getScriptProperties().getProperty('OPENAI_API_KEY');
   var assistantId = PropertiesService.getScriptProperties().getProperty('OPENAI_ASSISTANT_ID');
   
@@ -407,11 +412,16 @@ function callOpenAI(emailBody) {
       if (assistantMessage && assistantMessage.content && assistantMessage.content[0] && assistantMessage.content[0].text) {
         try {
           var jsonResponse = JSON.parse(assistantMessage.content[0].text.value);
+          // Add the messageId to the response
+          jsonResponse.messageId = messageId;
           return createEditableResponseCard(jsonResponse);
         } catch (parseError) {
           console.error('Error parsing OpenAI response:', parseError);
           console.log('Raw response:', assistantMessage.content[0].text.value);
-          return createEditableResponseCard({ error: "Unable to parse AI response. Raw response: " + assistantMessage.content[0].text.value });
+          return createEditableResponseCard({ 
+            error: "Unable to parse AI response. Raw response: " + assistantMessage.content[0].text.value,
+            messageId: messageId 
+          });
         }
       } else {
         console.error('Unexpected assistant message structure:', assistantMessage);
@@ -429,6 +439,15 @@ function callOpenAI(emailBody) {
 function createEditableResponseCard(jsonResponse) {
   var card = CardService.newCardBuilder();
   card.setHeader(CardService.newCardHeader().setTitle("OttoMate Assistant Response"));
+
+  // Store the messageId in a hidden text input
+  if (jsonResponse.messageId) {
+    var hiddenSection = CardService.newCardSection();
+    hiddenSection.addWidget(CardService.newTextInput()
+      .setFieldName("messageId")
+      .setValue(jsonResponse.messageId));
+    card.addSection(hiddenSection);
+  }
 
   if (typeof jsonResponse !== 'object' || jsonResponse === null) {
     console.error('Invalid jsonResponse:', jsonResponse);
@@ -789,13 +808,20 @@ function createShipment(e) {
 
   // Create the URL with parameters
   var baseUrl = "https://ops.trella.app/upsert/jobs/export";
-  var urlParams = ["triggerottofillextension=true"];  // Add this as the first parameter
+  var urlParams = ["triggerottofillextension=true"];
+  
+  // Get the messageId from PropertiesService
+  var messageId = PropertiesService.getUserProperties().getProperty('currentMessageId');
+  if (messageId) {
+    urlParams.push("gmailMessageId=" + encodeURIComponent(messageId));
+  }
   
   Object.keys(shipmentData).forEach(function(key) {
     urlParams.push(encodeURIComponent(key) + '=' + encodeURIComponent(shipmentData[key]));
   });
 
   var fullUrl = baseUrl + "?" + urlParams.join('&');
+  console.log("Constructed URL with messageId:", fullUrl);
 
   // Simulate the AI response (in a real scenario, this would come from your AI service)
   var aiResponse = shipmentData;
